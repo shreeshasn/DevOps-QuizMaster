@@ -1,93 +1,86 @@
 pipeline {
-    agent any
+  agent any
 
-    environment {
-        IMAGE = "${DOCKERHUB_USERNAME}/devops-quizmaster"
+  environment {
+    IMAGE = "${DOCKERHUB_USERNAME}/devops-quizmaster"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
     }
 
-    stages {
-
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
+    stage('Install Dependencies') {
+      steps {
+        dir('DevOps-QuizMaster') {
+          sh '''
+            echo "Node:"
+            node -v || echo "Node not present"
+            npm -v || echo "npm not present"
+            npm install
+          '''
         }
-
-        stage('Install Dependencies') {
-            steps {
-                sh '''
-                    echo "Node version:"
-                    node -v || echo "Node not installed"
-                    npm -v || echo "NPM not installed"
-
-                    npm install
-                '''
-            }
-        }
-
-        stage('Build App') {
-            steps {
-                sh '''
-                    npm run build
-                '''
-            }
-        }
-
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    def shortCommit = sh(
-                        script: 'git rev-parse --short HEAD', 
-                        returnStdout: true
-                    ).trim()
-
-                    env.IMAGE_TAG = "${IMAGE}:${shortCommit}"
-
-                    sh """
-                        docker build -t ${IMAGE_TAG} .
-                        docker tag ${IMAGE_TAG} ${IMAGE}:latest
-                    """
-                }
-            }
-        }
-
-        stage('Push to Docker Hub') {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DH_USER',
-                        passwordVariable: 'DH_PASS'
-                    )
-                ]) {
-                    sh """
-                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
-                        docker push ${IMAGE_TAG}
-                        docker push ${IMAGE}:latest
-                    """
-                }
-            }
-        }
-
-        stage('Slack Notification') {
-            steps {
-                withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
-                    sh """
-                        curl -X POST -H 'Content-Type: application/json' \
-                        -d '{\"text\": \"Jenkins Build Complete: ${IMAGE_TAG}\"}' \
-                        "$SLACK_WEBHOOK"
-                    """
-                }
-            }
-        }
+      }
     }
 
-    post {
-        success {
-            echo "Build and Push Completed Successfully."
+    stage('Build App') {
+      steps {
+        dir('DevOps-QuizMaster') {
+          sh '''
+            npm run build
+          '''
         }
-        failure {
-            echo "Build Failed. Check logs."
-        }
+        // make build output available to Docker build context at repo root
+        sh '''
+          rm -rf dist || true
+          cp -r DevOps-QuizMaster/dist ./dist
+          ls -la ./dist || true
+        '''
+      }
     }
+
+    stage('Build Docker Image') {
+      steps {
+        script {
+          def shortCommit = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+          env.IMAGE_TAG = "${IMAGE}:${shortCommit}"
+
+          sh """
+            docker build -t ${IMAGE_TAG} .
+            docker tag ${IMAGE_TAG} ${IMAGE}:latest
+          """
+        }
+      }
+    }
+
+    stage('Push to Docker Hub') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+          sh '''
+            echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+            docker push ${IMAGE_TAG}
+            docker push ${IMAGE}:latest
+            docker logout
+          '''
+        }
+      }
+    }
+
+    stage('Slack Notification') {
+      steps {
+        withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
+          sh '''
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"text\":\"Jenkins Build Complete: ${IMAGE_TAG}\"}" "$SLACK_WEBHOOK"
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    success { echo "Build and Push Completed Successfully." }
+    failure { echo "Build Failed. Check logs." }
+  }
 }
