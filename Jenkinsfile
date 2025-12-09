@@ -1,8 +1,11 @@
+//JenkinsFile for DOQM
+
 pipeline {
     agent any
 
     environment {
-        IMAGE = "${DOCKERHUB_USERNAME}/devops-quizmaster"
+        IMAGE        = "${DOCKERHUB_USERNAME}/devops-quizmaster"
+        NODE_VERSION = "18"
     }
 
     stages {
@@ -15,32 +18,20 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
-                sh '''
-                    echo "Node version:"
-                    node -v || echo "Node not installed"
-                    npm -v || echo "NPM not installed"
-
-                    npm install
-                '''
+                sh "docker run --rm -v \$(pwd):/app -w /app node:${NODE_VERSION} npm install"
             }
         }
 
         stage('Build App') {
             steps {
-                sh '''
-                    npm run build
-                '''
+                sh "docker run --rm -v \$(pwd):/app -w /app node:${NODE_VERSION} npm run build"
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    def shortCommit = sh(
-                        script: 'git rev-parse --short HEAD', 
-                        returnStdout: true
-                    ).trim()
-
+                    def shortCommit = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     env.IMAGE_TAG = "${IMAGE}:${shortCommit}"
 
                     sh """
@@ -64,6 +55,7 @@ pipeline {
                         echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
                         docker push ${IMAGE_TAG}
                         docker push ${IMAGE}:latest
+                        docker logout
                     """
                 }
             }
@@ -72,11 +64,13 @@ pipeline {
         stage('Slack Notification') {
             steps {
                 withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
-                    sh """
+                    script {
+                        sh """
                         curl -X POST -H 'Content-Type: application/json' \
-                        -d '{\"text\": \"Jenkins Build Complete: ${IMAGE_TAG}\"}' \
-                        "$SLACK_WEBHOOK"
-                    """
+                        -d '{"text":"Jenkins Build Complete: ${IMAGE_TAG}"}' \
+                        $SLACK_WEBHOOK
+                        """
+                    }
                 }
             }
         }
