@@ -16,19 +16,19 @@ pipeline {
       steps {
         script {
           // find first top-level directory that contains package.json
-          def pkgDir = sh(script: "for d in */ ; do if [ -f \"$d/package.json\" ]; then printf '%s' \"$d\"; break; fi; done", returnStdout: true).trim()
+          def pkgDir = sh(script: 'for d in */ ; do if [ -f "$d/package.json" ]; then printf "%s" "$d"; break; fi; done', returnStdout: true).trim()
           if (!pkgDir) {
             error "package.json not found in any top-level folder"
           }
           // remove trailing slash for later use
-          pkgDir = pkgDir.replaceAll(/\\/$/, '')
+          pkgDir = pkgDir.replaceAll(/\/$/, '')
           echo "Using package directory: ${pkgDir}"
 
           // run npm inside that directory
           dir(pkgDir) {
             sh '''
-              echo "Node: $(node -v || echo 'missing')"
-              echo "NPM: $(npm -v || echo 'missing')"
+              echo "Node: $(node -v || echo missing)"
+              echo "NPM: $(npm -v || echo missing)"
               npm install
             '''
           }
