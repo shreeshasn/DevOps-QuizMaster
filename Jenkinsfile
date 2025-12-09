@@ -12,32 +12,39 @@ pipeline {
       }
     }
 
-    stage('Install Dependencies') {
+    stage('Find package dir & Install') {
       steps {
-        dir('DevOps-QuizMaster') {
-          sh '''
-            echo "Node:"
-            node -v || echo "Node not present"
-            npm -v || echo "npm not present"
-            npm install
-          '''
-        }
-      }
-    }
+        script {
+          // find first top-level directory that contains package.json
+          def pkgDir = sh(script: "for d in */ ; do if [ -f \"$d/package.json\" ]; then printf '%s' \"$d\"; break; fi; done", returnStdout: true).trim()
+          if (!pkgDir) {
+            error "package.json not found in any top-level folder"
+          }
+          // remove trailing slash for later use
+          pkgDir = pkgDir.replaceAll(/\\/$/, '')
+          echo "Using package directory: ${pkgDir}"
 
-    stage('Build App') {
-      steps {
-        dir('DevOps-QuizMaster') {
-          sh '''
-            npm run build
-          '''
+          // run npm inside that directory
+          dir(pkgDir) {
+            sh '''
+              echo "Node: $(node -v || echo 'missing')"
+              echo "NPM: $(npm -v || echo 'missing')"
+              npm install
+            '''
+          }
+
+          // build inside same folder
+          dir(pkgDir) {
+            sh 'npm run build'
+          }
+
+          // copy build output to repo root (docker build context)
+          sh """
+            rm -rf dist || true
+            cp -r "${pkgDir}/dist" ./dist
+            ls -la ./dist || true
+          """
         }
-        // make build output available to Docker build context at repo root
-        sh '''
-          rm -rf dist || true
-          cp -r DevOps-QuizMaster/dist ./dist
-          ls -la ./dist || true
-        '''
       }
     }
 
@@ -46,7 +53,6 @@ pipeline {
         script {
           def shortCommit = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
           env.IMAGE_TAG = "${IMAGE}:${shortCommit}"
-
           sh """
             docker build -t ${IMAGE_TAG} .
             docker tag ${IMAGE_TAG} ${IMAGE}:latest
