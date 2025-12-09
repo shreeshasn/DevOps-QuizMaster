@@ -1,3 +1,5 @@
+//JenkinsFile for DOQM
+
 pipeline {
     agent any
 
