@@ -31,8 +31,8 @@ pipeline {
               echo "Node: $(node -v || echo missing)"
               echo "NPM: $(npm -v || echo missing)"
               npm install
+              npm run build
             '''
-            sh 'npm run build'
           }
 
           // copy build output to repo root for docker context
@@ -103,7 +103,8 @@ pipeline {
       echo "Build failed — check console logs."
     }
     always {
-      // optional cleanup can go here
+      // minimal cleanup/log step so Jenkins accepts the block
+      echo "Post actions complete (always)."
     }
   }
 }
