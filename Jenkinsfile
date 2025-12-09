@@ -74,16 +74,34 @@ pipeline {
       }
     }
 
-    stage('Slack Notification') {
-      steps {
-        withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
+stage('Slack Notification') {
+  steps {
+    withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
+      script {
+        try {
+          // run curl and capture http code + response
           sh '''
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"text\":\"Jenkins Build Complete: ${IMAGE_TAG}\"}" "$SLACK_WEBHOOK"
+            PAYLOAD=$(printf '{"text":"Jenkins Build Complete: %s"}' "${IMAGE_TAG}")
+            echo "Payload: $PAYLOAD"
+            HTTP_CODE=$(curl -s -o /tmp/slack_resp -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$SLACK_WEBHOOK" || echo "000")
+            echo "Slack HTTP status: $HTTP_CODE"
+            echo "Slack body:"
+            cat /tmp/slack_resp || true
+            if [ "$HTTP_CODE" -ge 400 ] || [ "$HTTP_CODE" = "000" ]; then
+              echo "Warning: Slack notify failed (status $HTTP_CODE)"
+            else
+              echo "Slack notified successfully."
+            fi
           '''
+        } catch (err) {
+          echo "Slack stage caught exception: ${err}"
+          // don't fail the entire build just because Slack failed
         }
       }
     }
   }
+}
+
 
   post {
     success { echo "Build and Push Completed Successfully." }
