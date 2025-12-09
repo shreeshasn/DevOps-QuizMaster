@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   environment {
-    IMAGE = "${DOCKERHUB_USERNAME}/devops-quizmaster"
+    IMAGE = "${DOCKERHUB_USERNAME ?: 'shreeshasn'}/devops-quizmaster"
   }
 
   stages {
@@ -16,29 +16,26 @@ pipeline {
       steps {
         script {
           // find first top-level directory that contains package.json
-          def pkgDir = sh(script: 'for d in */ ; do if [ -f "$d/package.json" ]; then printf "%s" "$d"; break; fi; done', returnStdout: true).trim()
+          def pkgDir = sh(
+            script: 'for d in */ ; do if [ -f "$d/package.json" ]; then printf "%s" "$d"; break; fi; done',
+            returnStdout: true
+          ).trim()
           if (!pkgDir) {
             error "package.json not found in any top-level folder"
           }
-          // remove trailing slash for later use
           pkgDir = pkgDir.replaceAll(/\/$/, '')
           echo "Using package directory: ${pkgDir}"
 
-          // run npm inside that directory
           dir(pkgDir) {
             sh '''
               echo "Node: $(node -v || echo missing)"
               echo "NPM: $(npm -v || echo missing)"
               npm install
             '''
-          }
-
-          // build inside same folder
-          dir(pkgDir) {
             sh 'npm run build'
           }
 
-          // copy build output to repo root (docker build context)
+          // copy build output to repo root for docker context
           sh """
             rm -rf dist || true
             cp -r "${pkgDir}/dist" ./dist
@@ -74,37 +71,39 @@ pipeline {
       }
     }
 
-stage('Slack Notification') {
-  steps {
-    withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
-      script {
-        try {
-          // run curl and capture http code + response
-          sh '''
-            PAYLOAD=$(printf '{"text":"Jenkins Build Complete: %s"}' "${IMAGE_TAG}")
-            echo "Payload: $PAYLOAD"
-            HTTP_CODE=$(curl -s -o /tmp/slack_resp -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$SLACK_WEBHOOK" || echo "000")
-            echo "Slack HTTP status: $HTTP_CODE"
-            echo "Slack body:"
-            cat /tmp/slack_resp || true
-            if [ "$HTTP_CODE" -ge 400 ] || [ "$HTTP_CODE" = "000" ]; then
-              echo "Warning: Slack notify failed (status $HTTP_CODE)"
-            else
-              echo "Slack notified successfully."
-            fi
-          '''
-        } catch (err) {
-          echo "Slack stage caught exception: ${err}"
-          // don't fail the entire build just because Slack failed
+    stage('Slack Notification') {
+      steps {
+        withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK')]) {
+          script {
+            // don't fail whole build just because Slack fails; log result instead
+            sh '''
+              PAYLOAD=$(printf '{"text":"Jenkins Build Complete: %s"}' "${IMAGE_TAG}")
+              echo "Payload: $PAYLOAD"
+              HTTP_CODE=$(curl -s -o /tmp/slack_resp -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$SLACK_WEBHOOK" || echo "000")
+              echo "Slack HTTP status: $HTTP_CODE"
+              echo "Slack body:"
+              cat /tmp/slack_resp || true
+              if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" -ge 400 ]; then
+                echo "Warning: Slack notify failed (status $HTTP_CODE)"
+              else
+                echo "Slack notified successfully."
+              fi
+            '''
+          }
         }
       }
     }
   }
-}
-
 
   post {
-    success { echo "Build and Push Completed Successfully." }
-    failure { echo "Build Failed. Check logs." }
+    success {
+      echo "Build and push completed successfully."
+    }
+    failure {
+      echo "Build failed — check console logs."
+    }
+    always {
+      // optional cleanup can go here
+    }
   }
 }
